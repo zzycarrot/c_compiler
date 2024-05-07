@@ -1,0 +1,3 @@
+C:/Users/ez_zz/Desktop/Lessons/c_compiler/cmake-build-debug/CMakeFiles/c_compiler.dir
+C:/Users/ez_zz/Desktop/Lessons/c_compiler/cmake-build-debug/CMakeFiles/edit_cache.dir
+C:/Users/ez_zz/Desktop/Lessons/c_compiler/cmake-build-debug/CMakeFiles/rebuild_cache.dir
