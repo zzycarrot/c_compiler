@@ -13,10 +13,14 @@ int token;
 char *src;
 int poolSize;
 int line;
+
 char *DATASEGMENT;
 int *TEXTSEGMENT;
 int *STACK;
 int *HEAP;
+int *pc, *bp, *sp, ax, cycle; // virtual machine registers
+int BP; //base pointer
+
 int *idmain;
 char* LP;  //last position (debug)
 int baseType;
@@ -26,18 +30,12 @@ enum { LEA ,IMM ,JMP ,CALL,JZ  ,JNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PUSH,
        OPEN,READ,CLOS,PRTF,MALC,MSET,MCMP,EXIT };
 
 //lexical
-/*
-enum {//if token is smaller then 128 ,then it isn't a token
-    Num = 128 ,Fun,Sys,Id,GLo,Loc,
-    Int,Char,If,Else,While,Return,Sizeof,Enum,
-    Assign,Div,Mul,Add,Sub,Lss,Leq,Gtr,Geq,Eq,Neq,Inc,Dec,Not,And,Or,Lshf,Rshf,Mod,Brak,Cond
-};//token
-*/
 enum {
     Num = 128, Fun, Sys, Id, Glo, Loc,
     Char, Else, Enum, If, Int, Return, Sizeof, While,
-    Assign,Div,Mul,Add,Sub,Lss,Leq,Gtr,Geq,Eq,Neq,Inc,Dec,Not,And,Or,Lshf,Rshf,Mod,Brak,Cond
-  };
+    Assign,Cond,And,Xor,Or,Eq,Neq,Lss,Leq,Gtr,Geq,Lshf,Rshf,Add,Sub,Mul,Div,Mod,Inc,Dec,Not,Brak
+    // Assign,Div,Mul,Add,Sub,Lss,Leq,Gtr,Geq,Eq,Neq,Inc,Dec,Not,And,Or,Lshf,Rshf,Mod,Brak,Cond
+};
 enum{INT,CHAR,PTR};  // type : exp (***int) = INT + PTR*3
 int tokenVal;
 int *currentId;
@@ -62,24 +60,22 @@ void next() {
             return;
         }else
         if( (token >= 'a' && token <= 'z') || (token >= 'A' && token <= 'Z') || token == '_') {
-            printf("Get Var: %c",token);
+            // printf("Get Var: %c",token);
             lastPos = src - 1;
             LP = lastPos;
             hash = token;
             while ((*src >= 'a' && *src <= 'z') || (*src >= 'A' && *src <= 'Z') || (*src >= '0' && *src <= '9') || (*src == '_')) {
-                putchar(*src);
+                // putchar(*src);
                 hash = hash * BASE + *src;
                 src++;
             }
-            putchar('\n');
             //check wehter is existing in indetifier table
             //ToDo :(2024/5/8:done)
             currentId = symbols;
             while(currentId[Token]) {
                 if(currentId[Hash] == hash && !memcmp((char* )currentId[Name],lastPos,src - lastPos)) {
-                    printf("--if\n");
                     token = currentId[Token];
-                    printf("already exist\n");
+                    // printf("already exist\n");
                     return;
                 }
                 currentId = currentId + Size; //next postion
@@ -88,7 +84,7 @@ void next() {
             currentId[Name] = (int)lastPos;
             currentId[Hash] = hash;
             token = currentId[Token] = Id;
-            printf("add new identifier\n");
+            // printf("add new identifier\n");
             return;
         }else
         if( token >= '0' && token <='9' ) {
@@ -110,14 +106,14 @@ void next() {
 
                 }
             }
-            printf("Get token(number) : %d \n", tokenVal);
+            // printf("Get token(number) : %d \n", tokenVal);
             token = Num;
             return;
         }else
 
         //String && char
         if( token == '"' || token == '\'' ) {
-            printf("Get token: str%c",token);
+            // printf("Get token: str%c",token);
 
             lastPos = DATASEGMENT;
             if( *src == EOF ) {
@@ -130,18 +126,18 @@ void next() {
                 if(tokenVal == '\\'){
                     if(*src == 'n') {
                         tokenVal = '\n';
-                        printf("\\n");
+                        // printf("\\n");
                         *src++;
                     }else {
                         tokenVal = *src;
-                        printf("%c",tokenVal);
+                        // printf("%c",tokenVal);
                         *src++;
                     }
                 }
             }
             src++;
             if(token == '"') {
-                printf("\"\n");
+                // printf("\"\n");
                 tokenVal = (int)*lastPos;
                 *DATASEGMENT++ = lastPos;
             }else {
@@ -150,7 +146,7 @@ void next() {
             return;
         }else
         //operator
-        printf("Get operator: ");
+        // printf("Get operator: ");
         if(token == '/') {
             if (*src == '/') {
                 //skip comments
@@ -307,7 +303,7 @@ void enum_declaration() {
 
 }
 
-int BP; //base pointer
+
 
 void function_parameter() {
     //parameter_declaration := type {'*'} id {',' type {'*'} id}
@@ -352,7 +348,92 @@ void function_parameter() {
 }
 
 void statement() {
+    /*
+    *statement := non_empty_statement | empty_statement
+    *non_empty_statement := if_statement | while_statement | '{' statement '}'
+    *                    | 'return' expression
+    *                    | expression ';'
+    *if_statement := 'if' '(' expression ')' statement ['else' non_empty_statement]
+    *while_statement := 'while' '(' expression ')' non_empty_statement
+    */
 
+    /*if (...)<statement> [else <statement>]*/
+    /*if (<cond>)           <cond>
+     *                      JZ L1
+     *<true statement>      <true statement>
+     *else:                  JMP L2
+     *L1:                   L1:
+     *<false statement>     <false statement>
+     *L2:                   L2:
+     */
+     int *L1,*L2;
+     if (token == If ) {
+         match(If);
+         match('(');
+            expression(Assign);
+         match(')');
+         *++TEXTSEGMENT = JZ;
+         L2 = ++TEXTSEGMENT;
+         statement();
+         if(token == Else) {
+             match(Else);
+             *L2 = (int)(TEXTSEGMENT + 3);
+             *++TEXTSEGMENT = JMP;
+             L2 = ++TEXTSEGMENT;
+             statement();
+
+         }
+        *L2 = (int)(TEXTSEGMENT + 1);
+     }
+
+
+    /*while (<cond>) <statement>*/
+    /*L1:                L1:
+     *while(<cond>)      <cond>
+     *                   JZ L2
+     *<statement>        <statement>
+     *                   JMP L1
+     *L2:                L2:
+     */
+    else if (token == While) {
+        match(While);
+        L1 = TEXTSEGMENT + 1;
+        match('(');
+        expression(Assign);
+        match(')');
+        *++TEXTSEGMENT = JZ;
+        L2 = TEXTSEGMENT + 1;
+        statement();
+        *++TEXTSEGMENT = JMP;
+        *++TEXTSEGMENT = (int)L1;
+        *L2 = (int)(TEXTSEGMENT + 1);
+    }
+    else if (token == Return) {
+        //return <expr>
+        match(Return);
+        if (token != ';') {
+            expression(Assign);
+        }
+        match(';');
+        *++TEXTSEGMENT = LEV;
+    }
+    else if (token == '{') {
+        // { <statement> ... }
+        match('{');
+        while (token != '}') {
+            statement();
+        }
+        match('}');
+    }
+    else if (token == ';') {
+        //empty statement
+        match(';');
+    }
+    else {
+        //a = b; or function_call();
+        expression(Assign);
+        match(';');
+    }
 }
 
 void function_body() {
@@ -453,10 +534,10 @@ void globel_declaration() {
         match(';');
         return;
     }
-    printf("token:%d| %c\n",token,token);
+    // printf("token:%d| %c\n",token,token);
     //variable or function declaration
     if(token == Int) {
-        printf("get int\n");
+        // printf("get int\n");
         match(Int);
         baseType = INT;
     }
@@ -505,14 +586,68 @@ void globel_declaration() {
 void program(){
     next();
     while(token >0 ) {
-        printf("----\n");
         globel_declaration();
     }
 }
 
 //Assembly Lang
-int eval() {
 
+int eval() {
+    int op, *tmp;
+    while (1) {
+        op = *pc++; // get next operation code
+
+        if (op == IMM)       {ax = *pc++;}                                     // load immediate value to ax
+        else if (op == LC)   {ax = *(char *)ax;}                               // load character to ax, address in ax
+        else if (op == LI)   {ax = *(int *)ax;}                                // load integer to ax, address in ax
+        else if (op == SC)   {ax = *(char *)*sp++ = ax;}                       // save character to address, value in ax, address on stack
+        else if (op == SI)   {*(int *)*sp++ = ax;}                             // save integer to address, value in ax, address on stack
+        else if (op == PUSH) {*--sp = ax;}                                     // push the value of ax onto the stack
+        else if (op == JMP)  {pc = (int *)*pc;}                                // jump to the address
+        else if (op == JZ)   {pc = ax ? pc + 1 : (int *)*pc;}                   // jump if ax is zero
+        else if (op == JNZ)  {pc = ax ? (int *)*pc : pc + 1;}                   // jump if ax is zero
+        else if (op == CALL) {*--sp = (int)(pc+1); pc = (int *)*pc;}           // call subroutine
+        //else if (op == RET)  {pc = (int *)*sp++;}                              // return from subroutine;
+        else if (op == ENT)  {*--sp = (int)bp; bp = sp; sp = sp - *pc++;}      // make new stack frame
+        else if (op == ADJ)  {sp = sp + *pc++;}                                // add esp, <size>
+        else if (op == LEV)  {sp = bp; bp = (int *)*sp++; pc = (int *)*sp++;}  // restore call frame and PC
+        else if (op == ENT)  {*--sp = (int)bp; bp = sp; sp = sp - *pc++;}      // make new stack frame
+        else if (op == ADJ)  {sp = sp + *pc++;}                                // add esp, <size>
+        else if (op == LEV)  {sp = bp; bp = (int *)*sp++; pc = (int *)*sp++;}  // restore call frame and PC
+        else if (op == LEA)  {ax = (int)(bp + *pc++);}                         // load address for arguments.
+
+        else if (op == OR)  ax = *sp++ | ax;
+        else if (op == XOR) ax = *sp++ ^ ax;
+        else if (op == AND) ax = *sp++ & ax;
+        else if (op == EQ)  ax = *sp++ == ax;
+        else if (op == NE)  ax = *sp++ != ax;
+        else if (op == LT)  ax = *sp++ < ax;
+        else if (op == LE)  ax = *sp++ <= ax;
+        else if (op == GT)  ax = *sp++ >  ax;
+        else if (op == GE)  ax = *sp++ >= ax;
+        else if (op == SHL) ax = *sp++ << ax;
+        else if (op == SHR) ax = *sp++ >> ax;
+        else if (op == ADD) ax = *sp++ + ax;
+        else if (op == SUB) ax = *sp++ - ax;
+        else if (op == MUL) ax = *sp++ * ax;
+        else if (op == DIV) ax = *sp++ / ax;
+        else if (op == MOD) ax = *sp++ % ax;
+
+
+        else if (op == EXIT) { printf("exit(%d)", *sp); return *sp;}
+        else if (op == OPEN) { ax = open((char *)sp[1], sp[0]); }
+        else if (op == CLOS) { ax = close(*sp);}
+        else if (op == READ) { ax = read(sp[2], (char *)sp[1], *sp); }
+        else if (op == PRTF) { tmp = sp + pc[1]; ax = printf((char *)tmp[-1], tmp[-2], tmp[-3], tmp[-4], tmp[-5], tmp[-6]); }
+        else if (op == MALC) { ax = (int)malloc(*sp);}
+        else if (op == MSET) { ax = (int)memset((char *)sp[2], sp[1], *sp);}
+        else if (op == MCMP) { ax = memcmp((char *)sp[2], (char *)sp[1], *sp);}
+        else {
+            printf("unknown instruction:%d\n", op);
+            return -1;
+        }
+    }
+    return 0;
 }
 
 int main(int argc,char **argv) {
@@ -561,11 +696,11 @@ int main(int argc,char **argv) {
         currentId[Type] = Int;
         currentId[Value] = i++;
         //ToDo : error (编译器问题？？？，不用cmake用gcc就解决了）
-        printf("match\n");
-        char *str1 =malloc(poolSize);
-        int tmp = (int)LP;
-        memcpy(str1,(char*)tmp,src - LP);
-        printf("str1:%s\n",str1);
+        // // printf("match\n");
+        // char *str1 =malloc(poolSize);
+        // int tmp = (int)LP;
+        // memcpy(str1,(char*)tmp,src - LP);
+        // printf("str1:%s\n",str1);
 
     }
 
