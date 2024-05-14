@@ -10,8 +10,11 @@ char *src;
 int poolSize;
 int line;
 char *DATASEGMENT;
+int *TEXTSEGMENT;
 int *idmain;
 char* LP;
+int baseType;
+int exprType;
 enum { LEA ,IMM ,JMP ,CALL,JZ  ,JNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PUSH,
        OR  ,XOR ,AND ,EQ  ,NE  ,LT  ,GT  ,LE  ,GE  ,SHL ,SHR ,ADD ,SUB ,MUL ,DIV ,MOD ,
        OPEN,READ,CLOS,PRTF,MALC,MSET,MCMP,EXIT };
@@ -29,6 +32,7 @@ enum {
     Char, Else, Enum, If, Int, Return, Sizeof, While,
     Assign,Div,Mul,Add,Sub,Lss,Leq,Gtr,Geq,Eq,Neq,Inc,Dec,Not,And,Or,Lshf,Rshf,Mod,Brak,Cond
   };
+enum{INT,CHAR,PTR};  // type
 int tokenVal;
 int *currentId;
 int *symbols; //start of symbol table
@@ -51,38 +55,6 @@ void next() {
             }
             return;
         }else
-
-
-        //Varible or Function
-        // if ((token >= 'a' && token <= 'z') || (token >= 'A' && token <= 'Z') || (token == '_')) {
-        //
-        //     // parse identifier
-        //     lastPos = src - 1;
-        //     hash = token;
-        //
-        //     while ((*src >= 'a' && *src <= 'z') || (*src >= 'A' && *src <= 'Z') || (*src >= '0' && *src <= '9') || (*src == '_')) {
-        //         hash = hash * 147 + *src;
-        //         src++;
-        //     }
-        //
-        //     // look for existing identifier, linear search
-        //     currentId = symbols;
-        //     while (currentId[Token]) {
-        //         if (currentId[Hash] == hash && !memcmp((char *)currentId[Name], lastPos, src - lastPos)) {
-        //             //found one, return
-        //             token = currentId[Token];
-        //             return;
-        //         }
-        //         currentId = currentId + Size;
-        //     }
-        //
-        //
-        //     // store new ID
-        //     currentId[Name] = (int)lastPos;
-        //     currentId[Hash] = hash;
-        //     token = currentId[Token] = Id;
-        //     return;
-        // }
         if( (token >= 'a' && token <= 'z') || (token >= 'A' && token <= 'Z') || token == '_') {
             printf("Get Var: %c",token);
             lastPos = src - 1;
@@ -98,12 +70,6 @@ void next() {
             //ToDo :(2024/5/8:done)
             currentId = symbols;
             while(currentId[Token]) {
-                // if(currentId[Hash] == hash) {
-                //     printf("match\n");
-                //     char *str1 =malloc(poolSize);
-                //     memcpy(str1,lastPos,src - lastPos);
-                //     printf("str1:%s\n",str1);
-                // }
                 if(currentId[Hash] == hash && !memcmp((char* )currentId[Name],lastPos,src - lastPos)) {
                     printf("--if\n");
                     token = currentId[Token];
@@ -292,10 +258,93 @@ void next() {
     }
 }
 
+void match(int tk) {
+    if(token==tk)next();
+    else{
+        printf("Error at line %d: expect token %d\n",line,tk);
+        exit(-1);
+    }
+}
 //expr
 void expression(int level) {
 
 }
+
+void enum_declaration() {
+
+}
+
+void function_declaration() {
+
+}
+
+/*
+ *globel_declaration := enum_declaration | variable_declaration | function_declaration
+ *enum_declaration := 'enum' [id] '{' id ['=' 'num'] {',' id ['=' 'num']} '}'
+ *variable_declaration := type {'*'} id {',' {'*'} id } ';'
+ *function_declaration := type {'*'} id '(' parameter_declaration ')' '{' body_declaration '}'
+ */
+void globel_declaration() {
+    int type;
+    int i;
+    baseType = INT;
+    //enum declaration
+    if(token == Enum) {
+        match(Enum);
+        if(token != '{') {
+            match(Id);
+        }
+        if(token=='{') {
+            match('{');
+            enum_declaration();
+            match('}');
+        }
+        match(';');
+        return;
+    }
+    //variable or function declaration
+    if(token == Int) {
+        match(Int);
+        baseType = INT;
+    }
+    else if(token == Char) {
+        match(Char);
+        baseType = CHAR;
+    }
+    while (token != ';' && token != '}') {
+        type = baseType;
+        //check for pointer like int **a;
+        while(token == Mul) {
+            match(Mul);
+            type = type + PTR;//pointer base type = type % number of base type;
+        }
+        if(token != Id) {
+            printf("Error at line %d: expect variable name\n",line);
+            exit(-1);
+        }
+        if(currentId[Class]) {
+            printf("Error at line %d: duplicate variable name\n",line);
+            exit(-1);
+        }
+        match(Id);
+        currentId[Type] = type;
+        if(token == '(') {
+            currentId[Class] = Fun;
+            currentId[Value] = (int)(TEXTSEGMENT + 1);
+            function_declaration();
+        }else {
+            currentId[Class] = Glo;
+            currentId[Value] = (int)DATASEGMENT;
+            DATASEGMENT = DATASEGMENT + sizeof(int);
+            //ToDo : change sizeof int to sizeof type?
+        }
+        if(token == ',') {
+            match(',');
+        }
+    }
+    next();
+}
+
 
 //entrence
 void program(){
@@ -303,7 +352,6 @@ void program(){
     while(token >0 ) {
         next();
     }
-
 }
 
 //Assembly Lang
