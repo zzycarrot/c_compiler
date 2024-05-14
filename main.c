@@ -1,3 +1,7 @@
+/*
+ *author: zzydanny
+ *time: 2024/5/7
+ */
 #include <stdio.h>
 #include <string.h>
 #include <memory.h>
@@ -11,8 +15,10 @@ int poolSize;
 int line;
 char *DATASEGMENT;
 int *TEXTSEGMENT;
+int *STACK;
+int *HEAP;
 int *idmain;
-char* LP;
+char* LP;  //last position (debug)
 int baseType;
 int exprType;
 enum { LEA ,IMM ,JMP ,CALL,JZ  ,JNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PUSH,
@@ -32,7 +38,7 @@ enum {
     Char, Else, Enum, If, Int, Return, Sizeof, While,
     Assign,Div,Mul,Add,Sub,Lss,Leq,Gtr,Geq,Eq,Neq,Inc,Dec,Not,And,Or,Lshf,Rshf,Mod,Brak,Cond
   };
-enum{INT,CHAR,PTR};  // type
+enum{INT,CHAR,PTR};  // type : exp (***int) = INT + PTR*3
 int tokenVal;
 int *currentId;
 int *symbols; //start of symbol table
@@ -271,11 +277,150 @@ void expression(int level) {
 }
 
 void enum_declaration() {
+    //enum_declaration := 'enum' [id] '{' id ['=' 'num'] {',' id ['=' 'num']} '}'
+    //parse enum [id] {id [= num] , id [= num], ...}
+    int i;
+    i = 0;
+    while (token != '}') {
+        if(token != Id) {
+            printf("Error at line %d: Expect identifier, but %d instead\n",line,token);
+            exit(-1);
+        }
+        i = tokenVal;
+        next();
+        if(token == Assign) {
+            next();
+            if(token != Num) {
+                printf("Error at line %d: Bad assign,should be initialized\n",line);
+                exit(-1);
+            }
+            i = tokenVal;
+            next();
+        }
+        currentId[Class] = Num;
+        currentId[Type] = INT;
+        currentId[Value] = i++; //default value ascending
+        if (token == ',') {
+            next();
+        }
+    }
 
 }
 
-void function_declaration() {
+int BP; //base pointer
 
+void function_parameter() {
+    //parameter_declaration := type {'*'} id {',' type {'*'} id}
+    int type;
+    int params;
+    params = 0;
+    while (token != ')') {
+        type = INT;
+        if (token == Int) {
+            match(Int);
+        }
+        else if (token == Char) {
+            match(Char);
+            type = CHAR;
+        }
+        //pointer type
+        while (token == Mul) {
+            match(Mul);
+            type = type + PTR;
+        }
+        //parameter name
+        if (token != Id) {
+            printf("Error at line %d: expect parameter name\n",line);
+            exit(-1);
+        }
+        if (currentId[Class] == Loc) {
+            printf("Error at line %d: duplicate parameter name\n",line);
+            exit(-1);
+        }
+        match(Id);
+        currentId[BClass] = currentId[Class];
+        currentId[Class] = Loc;
+        currentId[BType] = currentId[Type];
+        currentId[Type] = type;
+        currentId[BValue] = currentId[Value];
+        currentId[Value] = params++; //index of parameter offset of BP
+        if (token == ',') {
+            match(',');
+        }
+    }
+    BP = params + 1;
+}
+
+void function_body() {
+    /*
+     *type func (param) {body}
+     *in body:
+     *{
+     *  1. local variable declaration
+     *  2. statement
+     * }
+     */
+    int posLocal; // postion of local variables on the stack
+    int type;
+    posLocal = BP;
+    while(token == Int || token ==Char) {
+        baseType = (token == Int) ? INT : CHAR;
+        match(token);
+        while (token != ';') {
+            type = baseType;
+            while (token == Mul) {
+                match(Mul);
+                type = type + PTR;
+            }
+            if (token != Id) {
+                printf("Error at line %d: expect variable name\n",line);
+                exit(-1);
+            }
+            if (currentId[Class] == Loc) {
+                printf("Error at line %d: duplicate variable name\n",line);
+                exit(-1);
+            }
+            match(Id);
+            currentId[BClass] = currentId[Class];
+            currentId[Class] = Loc;
+            currentId[BType] = currentId[Type];
+            currentId[Type] = type;
+            currentId[BValue] = currentId[Value];
+            currentId[Value] = ++posLocal;
+            if (token == ',') {
+                match(',');
+            }
+        }
+        match(";");
+    }
+    *++TEXTSEGMENT = ENT; //entrance
+    *++TEXTSEGMENT = posLocal - BP;
+
+    //statements
+    while (token != '}') {
+        statement();
+    }
+    *++TEXTSEGMENT = LEV; //
+}
+void function_declaration() {
+    // type func (param) {body}
+    match('(');
+    function_parameter();
+    match(')');
+    match('{');
+    function_body();
+
+
+    // match('}');
+    currentId = symbols;
+    while(currentId[Token]) {
+        if (currentId[Class] == Loc) {
+            currentId[Class] = currentId[BClass];
+            currentId[Type] = currentId[BType];
+            currentId[Value] = currentId[BValue];
+            //recover the symbol table
+        }
+    }
 }
 
 /*
@@ -302,8 +447,10 @@ void globel_declaration() {
         match(';');
         return;
     }
+    printf("token:%d| %c\n",token,token);
     //variable or function declaration
     if(token == Int) {
+        printf("get int\n");
         match(Int);
         baseType = INT;
     }
@@ -320,6 +467,7 @@ void globel_declaration() {
         }
         if(token != Id) {
             printf("Error at line %d: expect variable name\n",line);
+            printf("token:%d\n",token);
             exit(-1);
         }
         if(currentId[Class]) {
@@ -337,6 +485,7 @@ void globel_declaration() {
             currentId[Value] = (int)DATASEGMENT;
             DATASEGMENT = DATASEGMENT + sizeof(int);
             //ToDo : change sizeof int to sizeof type?
+            //ToDo : pointers should be stored in the heap when malloc() is called
         }
         if(token == ',') {
             match(',');
@@ -350,7 +499,8 @@ void globel_declaration() {
 void program(){
     next();
     while(token >0 ) {
-        next();
+        printf("----\n");
+        globel_declaration();
     }
 }
 
@@ -378,8 +528,13 @@ int main(int argc,char **argv) {
         printf("could not malloc(%d) for symbol table\n", poolSize);
         return -1;
     }
-    memset(DATASEGMENT,0,sizeof(poolSize));
-    memset(symbols,0,sizeof(poolSize));
+    if (!(TEXTSEGMENT = malloc(poolSize))) {
+        printf("could not malloc(%d) for TEXTSEGMENT table\n", poolSize);
+        return -1;
+    }
+    memset(TEXTSEGMENT,0,poolSize);
+    memset(DATASEGMENT,0,poolSize);
+    memset(symbols,0,poolSize);
 
     // add keywords to symbol table
     // src = "int char if else while return sizeof enum "
