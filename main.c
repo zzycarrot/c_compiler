@@ -351,6 +351,10 @@ void function_parameter() {
     BP = params + 1;
 }
 
+void statement() {
+
+}
+
 void function_body() {
     /*
      *type func (param) {body}
@@ -363,6 +367,8 @@ void function_body() {
     int posLocal; // postion of local variables on the stack
     int type;
     posLocal = BP;
+
+    //local variable declaration
     while(token == Int || token ==Char) {
         baseType = (token == Int) ? INT : CHAR;
         match(token);
