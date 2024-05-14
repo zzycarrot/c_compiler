@@ -7,6 +7,7 @@
 #include <memory.h>
 #include <stdlib.h>
 #include <fcntl.h>
+#include <math.h>
 #include <unistd.h>
 #define BASE 147
 int token;
@@ -33,7 +34,7 @@ enum { LEA ,IMM ,JMP ,CALL,JZ  ,JNZ ,ENT ,ADJ ,LEV ,LI  ,LC  ,SI  ,SC  ,PUSH,
 enum {
     Num = 128, Fun, Sys, Id, Glo, Loc,
     Char, Else, Enum, If, Int, Return, Sizeof, While,
-    Assign,Cond,And,Xor,Or,Eq,Neq,Lss,Leq,Gtr,Geq,Lshf,Rshf,Add,Sub,Mul,Div,Mod,Inc,Dec,Not,Brak
+    Assign,Cond,LAnd,LOr,And,Xor,Or,Eq,Neq,Lss,Leq,Gtr,Geq,Lshf,Rshf,Add,Sub,Mul,Div,Mod,Inc,Dec,Not,Brak
     // Assign,Div,Mul,Add,Sub,Lss,Leq,Gtr,Geq,Eq,Neq,Inc,Dec,Not,And,Or,Lshf,Rshf,Mod,Brak,Cond
 };
 enum{INT,CHAR,PTR};  // type : exp (***int) = INT + PTR*3
@@ -141,7 +142,9 @@ void next() {
                 tokenVal = (int)*lastPos;
                 *DATASEGMENT++ = lastPos;
             }else {
-                token = Num;
+                printf("Missing \' or \" \n");
+                exit(-1);
+                // token = Num;
             }
             return;
         }else
@@ -233,6 +236,8 @@ void next() {
             //parser &&
             if(*src == '&') {
                 src++;
+                token = LAnd;
+            }else {
                 token = And;
             }
             return;
@@ -241,6 +246,8 @@ void next() {
             //parser ||
             if(*src == '|') {
                 src++;
+                token = LOr;
+            }else {
                 token = Or;
             }
             return;
@@ -269,6 +276,204 @@ void match(int tk) {
 }
 //expr
 void expression(int level) {
+    /*
+    *expression := assign {',' assign}
+    *assign := equality ['=' assign]
+    *equality := relational {'==' relational | '!=' relational}
+    *relational := add {'<' add | '<=' add | '>' add | '>=' add}
+    *add := mul {'+' mul | '-' mul}
+    *mul := unary {'*' unary | '/' unary}
+    *unary := primary | '*' unary | '&' unary | '!' unary | '-' unary
+    *primary := num | id | '(' expr ')'
+    */
+    int *id;
+    int tmp;
+    if(!token) {
+        printf("Error at line %d: unexpected token EOF\n",line);
+        exit(-1);
+    }
+    if(token == Num) {
+        match(Num);
+        *++TEXTSEGMENT = IMM;
+        *++TEXTSEGMENT = tokenVal;
+        exprType = INT;
+    }else if(token == '"') {
+        /*string*/
+        *++TEXTSEGMENT = IMM;
+        *++TEXTSEGMENT = tokenVal;
+        match('"');
+        while(token == '"') {
+            match('"');
+        }
+        //ToDo : string like "abc"'\n'"abc" should be treated as "abcabc"
+    }else if(token == Sizeof) {
+        /*sizeof(int) sizeof(char) sizeof(*int) sizeof(*char)*/
+        match(Sizeof);
+        match('(');
+        exprType = INT;
+        if(token == Int) {
+            match(Int);
+        }else if(token == Char) {
+            match(Char);
+            exprType = CHAR;
+        }
+        while(token == Mul) {
+            match(Mul);
+            exprType = exprType + PTR;
+        }
+        match(')');
+        *++TEXTSEGMENT = IMM;
+        *++TEXTSEGMENT = (exprType == CHAR) ? sizeof(char) : sizeof(int);
+        exprType = INT;
+    }else if(token == Id) {
+        /*1.Global or local variable
+         *2.Function call
+         *3.Enum
+         */
+        match(Id);
+        id = currentId;
+        if(token == '(') {
+            /*function call*/
+            match('(');
+            tmp = 0;
+            while(token != ')') {
+                expression(Assign);
+                *++TEXTSEGMENT = PUSH;
+                tmp++;
+                if(token == ',') {
+                    match(',');
+                }
+            }
+            match(')');
+            if(id[Class] == Sys) {
+                *++TEXTSEGMENT = id[Value];
+            }else if(id[Class] == Fun) {
+                *++TEXTSEGMENT = CALL;
+                *++TEXTSEGMENT = id[Value];
+            }else {
+                printf("Error at line %d: call non-function\n",line);
+                exit(-1);
+            }
+            if(tmp) {
+                *++TEXTSEGMENT = ADJ;
+                *++TEXTSEGMENT = tmp;
+            }
+            exprType = id[Type];
+        }else if(id[Class] == Num) {
+            /*enum*/
+            *++TEXTSEGMENT = IMM;
+            *++TEXTSEGMENT = id[Value];
+            exprType = INT;
+        }else {
+            /*variable*/
+            if (id[Class] == Loc) {
+                *++TEXTSEGMENT = LEA;
+                *++TEXTSEGMENT = BP - id[Value];
+            }else if (id[Class] == Glo) {
+                *++TEXTSEGMENT = IMM;
+                *++TEXTSEGMENT = id[Value];
+            }
+            exprType = id[Type];
+            *++TEXTSEGMENT = (exprType == CHAR) ? LC : LI;
+        }
+    }
+    else if (token == '(') {
+        /* cast or parenthesis */
+        match('(');
+        if(token == Int || token == Char) {
+            /* cast */
+            tmp = (token == Int) ? INT : CHAR;
+            match(token);
+            while(token == Mul) {
+                match(Mul);
+                tmp = tmp + PTR;
+            }
+            match(')');
+            expression(Inc);
+            exprType = tmp;
+        }else {
+            /*parenthesis */
+            expression(Assign);
+            exprType = INT;
+        }
+    }
+    else if (token == Mul) {
+        /* dereference *a */
+        match(Mul);
+        expression(Inc);
+        if (exprType >= PTR) {
+            exprType = exprType - PTR;
+        }else {
+            printf("Bad dereference at line %d:\n",line);
+            exit(-1);
+        }
+        *++TEXTSEGMENT = (exprType == CHAR) ? LC : LI;
+    }
+    else if (token == AND) {
+        /* address of (&)a */
+        match(AND);
+        expression(Inc);
+        if (*TEXTSEGMENT == LC || *TEXTSEGMENT == LI) {
+            TEXTSEGMENT--;
+        }else {
+            printf("Bad address of at line %d:\n",line);
+            exit(-1);
+        }
+    }
+    else if(token == '!') {
+        /* bool not */
+        match('!');
+        expression(Inc);
+        /*<expr == 0>*/
+        *++TEXTSEGMENT = PUSH;
+        *++TEXTSEGMENT = IMM;
+        *++TEXTSEGMENT = 0;
+        *++TEXTSEGMENT = EQ;
+        exprType = INT;
+    }
+    else if(token == ADD) {
+        /* +a */
+        match(ADD);
+        expression(Inc);
+    }
+    else if (token == SUB) {
+        /* -a */
+        match(SUB);
+        expression(Inc);
+        if (token == Num) {
+            *++TEXTSEGMENT = IMM;
+            *++TEXTSEGMENT = -tokenVal;
+            match(Num);
+        }
+        else {
+            /* -1 * a : a maybe a return val of a function*/
+            *++TEXTSEGMENT = IMM;
+            *++TEXTSEGMENT = -1;
+            expression(Inc);
+            *++TEXTSEGMENT = MUL;
+        }
+        exprType = INT;
+    }
+    else if (token == Inc || token == Dec) {
+        tmp = token;
+        match(token);
+        expression(Inc);
+        if (*TEXTSEGMENT == LC) {
+            *TEXTSEGMENT = PUSH;
+            *++TEXTSEGMENT = LC;
+        }else if (*TEXTSEGMENT == LI) {
+            *TEXTSEGMENT = PUSH;
+            *++TEXTSEGMENT = LI;
+        }else {
+            printf("Error at line %d: lvalue required in increment/decrement\n",line);
+            exit(-1);
+        }
+        *++TEXTSEGMENT = PUSH;
+        *++TEXTSEGMENT = IMM;
+        *++TEXTSEGMENT = (exprType > PTR) ? sizeof(int) : sizeof(char);
+        *++TEXTSEGMENT = (tmp == Inc) ? ADD : SUB;
+        *++TEXTSEGMENT = (exprType == CHAR) ? SC : SI;
+    }
 
 }
 
@@ -302,8 +507,6 @@ void enum_declaration() {
     }
 
 }
-
-
 
 void function_parameter() {
     //parameter_declaration := type {'*'} id {',' type {'*'} id}
@@ -489,6 +692,7 @@ void function_body() {
     }
     *++TEXTSEGMENT = LEV; //
 }
+
 void function_declaration() {
     // type func (param) {body}
     match('(');
@@ -581,7 +785,6 @@ void globel_declaration() {
     next();
 }
 
-
 //entrence
 void program(){
     next();
@@ -591,7 +794,6 @@ void program(){
 }
 
 //Assembly Lang
-
 int eval() {
     int op, *tmp;
     while (1) {
