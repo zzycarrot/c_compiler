@@ -1,13 +1,15 @@
-//
-// Created by ez_zz on 2024/5/7.
-//
 #include<stdio.h>
-int a = 1;
-int a = 1;
-int main() {
-    printf("hello world\n");
-    int a = 1;
-    if( a == 1 ) {
-        printf("a+1 is %d\n", ++a);
+int ab,a,b;
+int func(int num){
+    int ans;
+    while(ans<10){
+        ans++;
     }
+    return ans;
+}
+int main() {
+    int a,b;
+    a = 1;
+    printf("hello world!\n");
+    return 0;
 }

@@ -10,6 +10,7 @@
 #include <math.h>
 #include <unistd.h>
 #define BASE 147
+#define debug printf
 int token;
 char *src;
 int poolSize;
@@ -35,13 +36,257 @@ enum {
     Num = 128, Fun, Sys, Id, Glo, Loc,
     Char, Else, Enum, If, Int, Return, Sizeof, While,
     Assign,Cond,LAnd,LOr,And,Xor,Or,Eq,Neq,Lss,Leq,Gtr,Geq,Lshf,Rshf,Add,Sub,Mul,Div,Mod,Inc,Dec,Not,Brak
-    // Assign,Div,Mul,Add,Sub,Lss,Leq,Gtr,Geq,Eq,Neq,Inc,Dec,Not,And,Or,Lshf,Rshf,Mod,Brak,Cond
+    // Assign,Div,Mul,Add,Sub,Lss,Leq,Gtr,Geq,Eq,Neqq,Inc,Dec,Not,And,Or,Lshf,Rshf,Mod,Brak,Cond
 };
 enum{INT,CHAR,PTR};  // type : exp (***int) = INT + PTR*3
 int tokenVal;
 int *currentId;
 int *symbols; //start of symbol table
 enum {Token, Hash, Name, Type, Class, Value, BType, BClass, BValue, Size};//indentifier table
+int indexBP;
+void next() {
+    printf("call next()\n");
+    char *last_pos;
+    int hash;
+
+    while (token = *src) {
+        printf("----\n");
+        ++src;
+
+        // parse token here
+        if (token == '\n') {
+            ++line;
+        }
+        else if (token == '#') {
+            // skip macro, because we will not support it
+            while (*src != 0 && *src != '\n') {
+                src++;
+            }
+        }
+        else if ((token >= 'a' && token <= 'z') || (token >= 'A' && token <= 'Z') || (token == '_')) {
+            printf("get id\n");
+            // parse identifier
+            last_pos = src - 1;
+            hash = token;
+
+            while ((*src >= 'a' && *src <= 'z') || (*src >= 'A' && *src <= 'Z') || (*src >= '0' && *src <= '9') || (*src == '_')) {
+                hash = hash * 147 + *src;
+                src++;
+            }
+            printf("match\n");
+            int l1 = (int)last_pos;
+            int l2 = (int)src;
+            char *str1 =malloc(poolSize);
+            int tmp = (int)last_pos;
+            memcpy(str1,(char*)tmp,src - last_pos);
+            printf("str1:%s\n",str1);
+
+            // look for existing identifier, linear search
+            currentId = symbols;
+            while (currentId[Token]) {
+                if (currentId[Hash] == hash && !memcmp((char *)currentId[Name], last_pos, src - last_pos)) {
+                    //found one, return
+                    debug("already exists\n");
+                    token = currentId[Token];
+                    return;
+                }
+                currentId = currentId + Size;
+            }
+
+
+            // store new ID
+            currentId[Name] = (int)last_pos;
+            currentId[Hash] = hash;
+            token = currentId[Token] = Id;
+            return;
+        }
+        else if (token >= '0' && token <= '9') {
+            printf("get number\n");
+            // parse number, three kinds: dec(123) hex(0x123) oct(017)
+            tokenVal = token - '0';
+            if (tokenVal > 0) {
+                // dec, starts with [1-9]
+                while (*src >= '0' && *src <= '9') {
+                    tokenVal = tokenVal*10 + *src++ - '0';
+                }
+            } else {
+                // starts with 0
+                if (*src == 'x' || *src == 'X') {
+                    //hex
+                    token = *++src;
+                    while ((token >= '0' && token <= '9') || (token >= 'a' && token <= 'f') || (token >= 'A' && token <= 'F')) {
+                        tokenVal = tokenVal * 16 + (token & 15) + (token >= 'A' ? 9 : 0);
+                        token = *++src;
+                    }
+                } else {
+                    // oct
+                    while (*src >= '0' && *src <= '7') {
+                        tokenVal = tokenVal*8 + *src++ - '0';
+                    }
+                }
+            }
+
+            token = Num;
+            return;
+        }
+        else if (token == '"' || token == '\'') {
+            printf("get string\n");
+            // parse string literal, currently, the only supported escape
+            // character is '\n', store the string literal into DATASEGMENT.
+            last_pos = DATASEGMENT;
+            while (*src != 0 && *src != token) {
+                tokenVal = *src++;
+                if (tokenVal == '\\') {
+                    // escape character
+                    tokenVal = *src++;
+                    if (tokenVal == 'n') {
+                        tokenVal = '\n';
+                    }
+                }
+
+                putchar(tokenVal);
+                if (token == '"') {
+                    *DATASEGMENT++ = tokenVal;
+                }
+            }
+
+            src++;
+            // if it is a single character, return Num token
+            if (token == '"') {
+                tokenVal = (int)last_pos;
+            } else {
+                token = Num;
+            }
+            printf("end string\n");
+            putchar('\n');
+            return;
+        }
+        else if (token == '/') {
+            if (*src == '/') {
+                // skip comments
+                while (*src != 0 && *src != '\n') {
+                    ++src;
+                }
+            } else {
+                // divide operator
+                token = Div;
+                return;
+            }
+            return;
+        }
+        printf("-%c\n",token);
+        if (token == '=') {
+            // parse '==' and '='
+            if (*src == '=') {
+                src ++;
+                token = Eq;
+            } else {
+                token = Assign;
+            }
+            return;
+        }
+        else if (token == '+') {
+            // parse '+' and '++'
+            if (*src == '+') {
+                src ++;
+                token = Inc;
+            } else {
+                token = Add;
+            }
+            return;
+        }
+        else if (token == '-') {
+            // parse '-' and '--'
+            if (*src == '-') {
+                src ++;
+                token = Dec;
+            } else {
+                token = Sub;
+            }
+            return;
+        }
+        else if (token == '!') {
+            // parse '!='
+            if (*src == '=') {
+                src++;
+                token = Neq;
+            }
+            return;
+        }
+        else if (token == '<') {
+            // parse '<=', '<<' or '<'
+            if (*src == '=') {
+                src ++;
+                token = Leq;
+            } else if (*src == '<') {
+                src ++;
+                token = Lshf;
+            } else {
+                token = Lss;
+            }
+            return;
+        }
+        else if (token == '>') {
+            // parse '>=', '>>' or '>'
+            if (*src == '=') {
+                src ++;
+                token = Geq;
+            } else if (*src == '>') {
+                src ++;
+                token = Rshf;
+            } else {
+                token = Gtr;
+            }
+            return;
+        }
+        else if (token == '|') {
+            // parse '|' or '||'
+            if (*src == '|') {
+                src ++;
+                token = LOr;
+            } else {
+                token = Or;
+            }
+            return;
+        }
+        else if (token == '&') {
+            // parse '&' and '&&'
+            if (*src == '&') {
+                src ++;
+                token = LAnd;
+            } else {
+                token = And;
+            }
+            return;
+        }
+        else if (token == '^') {
+            token = Xor;
+            return;
+        }
+        else if (token == '%') {
+            token = Mod;
+            return;
+        }
+        else if (token == '*') {
+            token = Mul;
+            return;
+        }
+        else if (token == '[') {
+            token = Brak;
+            return;
+        }
+        else if (token == '?') {
+            token = Cond;
+            return;
+        }
+        else if (token == '~' || token == ';' || token == '{' || token == '}' || token == '(' || token == ')' || token == ']' || token == ',' || token == ':') {
+            // directly return the character as token;
+            return;
+        }
+    }
+    return;
+}
+/**
 void next() {
     char * lastPos;
     int hash;
@@ -90,7 +335,7 @@ void next() {
         }else
         if( token >= '0' && token <='9' ) {
             //Number
-            //ToDo : Negative number
+            //ToDo : Neqgative number
             tokenVal = token - '0';
             if(tokenVal > 0) {
                 while (*src >= '0' && *src <= '9' ) {
@@ -266,16 +511,18 @@ void next() {
         }
     }
 }
-
+*/
 void match(int tk) {
     if(token==tk)next();
     else{
         printf("Error at line %d: expect token %d\n",line,tk);
+        printf("get token %d instead\n",token);
         exit(-1);
     }
 }
 //expr
 void expression(int level) {
+    printf("call expression\n");
     /*
     *expression := assign {',' assign}
     *assign := equality ['=' assign]
@@ -288,6 +535,7 @@ void expression(int level) {
     */
     int *id;
     int tmp;
+    int *addr;
     if(!token) {
         printf("Error at line %d: unexpected token EOF\n",line);
         exit(-1);
@@ -368,7 +616,7 @@ void expression(int level) {
             /*variable*/
             if (id[Class] == Loc) {
                 *++TEXTSEGMENT = LEA;
-                *++TEXTSEGMENT = BP - id[Value];
+                *++TEXTSEGMENT = indexBP - id[Value];
             }else if (id[Class] == Glo) {
                 *++TEXTSEGMENT = IMM;
                 *++TEXTSEGMENT = id[Value];
@@ -474,10 +722,271 @@ void expression(int level) {
         *++TEXTSEGMENT = (tmp == Inc) ? ADD : SUB;
         *++TEXTSEGMENT = (exprType == CHAR) ? SC : SI;
     }
+    //binary operator
+    while(token>=level) {
+        tmp = exprType;
+        if(token == Assign) {
+            match(Assign);
+            printf("matched assign\n");
+            if(*TEXTSEGMENT == LC || *TEXTSEGMENT == LI) {
+                *TEXTSEGMENT = PUSH;
+            }else {
+                printf("Error at line %d: lvalue required in assignment\n",line);
+                exit(-1);
+            }
+            expression(Assign);
+            exprType = tmp;
+            *++TEXTSEGMENT = (exprType == CHAR) ? SC : SI;  //store
+        }else if(token == Cond) {
+            //expr?expr:expr
+            match(Cond);
+            *++TEXTSEGMENT = JZ;
+            addr = ++TEXTSEGMENT;
+            expression(Assign);
+            if(token == ':') {
+                match(':');
+            }else {
+                printf("%d: missing colon in conditional\n", line);
+                exit(-1);
+            }
+            *addr = (int)(TEXTSEGMENT + 3);
+            *++TEXTSEGMENT = JMP;
+            addr = ++TEXTSEGMENT;
+            expression(Cond);
+            *addr = (int)(TEXTSEGMENT + 1);
+        }
+        else if (token == LOr) {
+            // logic or
+            match(LOr);
+            *++TEXTSEGMENT = JNZ;
+            addr = ++TEXTSEGMENT;
+            expression(LAnd);
+            *addr = (int)(TEXTSEGMENT + 1);
+            exprType = INT;
+        }
+        else if (token == LAnd) {
+            // logic and
+            match(LAnd);
+            *++TEXTSEGMENT = JZ;
+            addr = ++TEXTSEGMENT;
+            expression(Or);
+            *addr = (int)(TEXTSEGMENT + 1);
+            exprType = INT;
+        }
+        else if (token == Or) {
+            // bitwise or
+            match(Or);
+            *++TEXTSEGMENT = PUSH;
+            expression(Xor);
+            *++TEXTSEGMENT = OR;
+            exprType = INT;
+        }
+        else if (token == Xor) {
+            // bitwise xor
+            match(Xor);
+            *++TEXTSEGMENT = PUSH;
+            expression(And);
+            *++TEXTSEGMENT = XOR;
+            exprType = INT;
+        }
+        else if (token == And) {
+            // bitwise and
+            match(And);
+            *++TEXTSEGMENT = PUSH;
+            expression(Eq);
+            *++TEXTSEGMENT = AND;
+            exprType = INT;
+        }
+        else if (token == Eq) {
+            // equal ==
+            match(Eq);
+            *++TEXTSEGMENT = PUSH;
+            expression(Neq);
+            *++TEXTSEGMENT = EQ;
+            exprType = INT;
+        }
+        else if (token == Neq) {
+            // not equal !=
+            match(Neq);
+            *++TEXTSEGMENT = PUSH;
+            expression(Lss);
+            *++TEXTSEGMENT = NE;
+            exprType = INT;
+        }
+        else if (token == Lss) {
+            // less than
+            match(Lss);
+            *++TEXTSEGMENT = PUSH;
+            expression(Lshf);
+            *++TEXTSEGMENT = LT;
+            exprType = INT;
+        }
+        else if (token == Gtr) {
+            // greater than
+            match(Gtr);
+            *++TEXTSEGMENT = PUSH;
+            expression(Lshf);
+            *++TEXTSEGMENT = GT;
+            exprType = INT;
+        }
+        else if (token == Leq) {
+            // less than or equal to
+            match(Leq);
+            *++TEXTSEGMENT = PUSH;
+            expression(Lshf);
+            *++TEXTSEGMENT = LE;
+            exprType = INT;
+        }
+        else if (token == Geq) {
+            // greater than or equal to
+            match(Geq);
+            *++TEXTSEGMENT = PUSH;
+            expression(Lshf);
+            *++TEXTSEGMENT = GE;
+            exprType = INT;
+        }
+        else if (token == Lshf) {
+            // shift left
+            match(Lshf);
+            *++TEXTSEGMENT = PUSH;
+            expression(Add);
+            *++TEXTSEGMENT = SHL;
+            exprType = INT;
+        }
+        else if (token == Rshf) {
+            // shift right
+            match(Rshf);
+            *++TEXTSEGMENT = PUSH;
+            expression(Add);
+            *++TEXTSEGMENT = SHR;
+            exprType = INT;
+        }
+        else if (token == Add) {
+            // add
+            match(Add);
+            *++TEXTSEGMENT = PUSH;
+            expression(Mul);
 
+            exprType = tmp;
+            if (exprType > PTR) {
+                // pointer type, and not `char *`
+                *++TEXTSEGMENT = PUSH;
+                *++TEXTSEGMENT = IMM;
+                *++TEXTSEGMENT = sizeof(int);
+                *++TEXTSEGMENT = MUL;
+            }
+            *++TEXTSEGMENT = ADD;
+        }
+        else if (token == Sub) {
+            // sub
+            match(Sub);
+            *++TEXTSEGMENT = PUSH;
+            expression(Mul);
+            if (tmp > PTR && tmp == exprType) {
+                // pointer subtraction
+                *++TEXTSEGMENT = SUB;
+                *++TEXTSEGMENT = PUSH;
+                *++TEXTSEGMENT = IMM;
+                *++TEXTSEGMENT = sizeof(int);
+                *++TEXTSEGMENT = DIV;
+                exprType = INT;
+            } else if (tmp > PTR) {
+                // pointer movement
+                *++TEXTSEGMENT = PUSH;
+                *++TEXTSEGMENT = IMM;
+                *++TEXTSEGMENT = sizeof(int);
+                *++TEXTSEGMENT = MUL;
+                *++TEXTSEGMENT = SUB;
+                exprType = tmp;
+            } else {
+                // numeral subtraction
+                *++TEXTSEGMENT = SUB;
+                exprType = tmp;
+            }
+        }
+        else if (token == Mul) {
+            // multiply
+            match(Mul);
+            *++TEXTSEGMENT = PUSH;
+            expression(Inc);
+            *++TEXTSEGMENT = MUL;
+            exprType = tmp;
+        }
+        else if (token == Div) {
+            // divide
+            match(Div);
+            *++TEXTSEGMENT = PUSH;
+            expression(Inc);
+            *++TEXTSEGMENT = DIV;
+            exprType = tmp;
+        }
+        else if (token == Mod) {
+            // Modulo
+            match(Mod);
+            *++TEXTSEGMENT = PUSH;
+            expression(Inc);
+            *++TEXTSEGMENT = MOD;
+            exprType = tmp;
+        }
+        else if (token == Inc || token == Dec) {
+            // postfix inc(++) and dec(--)
+            // we will increase the value to the variable and decrease it
+            // on `ax` to get its original value.
+            if (*TEXTSEGMENT == LI) {
+                *TEXTSEGMENT = PUSH;
+                *++TEXTSEGMENT = LI;
+            }
+            else if (*TEXTSEGMENT == LC) {
+                *TEXTSEGMENT = PUSH;
+                *++TEXTSEGMENT = LC;
+            }
+            else {
+                printf("%d: bad value in increment\n", line);
+                exit(-1);
+            }
+
+            *++TEXTSEGMENT = PUSH;
+            *++TEXTSEGMENT = IMM;
+            *++TEXTSEGMENT = (exprType > PTR) ? sizeof(int) : sizeof(char);
+            *++TEXTSEGMENT = (token == Inc) ? ADD : SUB;
+            *++TEXTSEGMENT = (exprType == CHAR) ? SC : SI;
+            *++TEXTSEGMENT = PUSH;
+            *++TEXTSEGMENT = IMM;
+            *++TEXTSEGMENT = (exprType > PTR) ? sizeof(int) : sizeof(char);
+            *++TEXTSEGMENT = (token == Inc) ? SUB : ADD;
+            match(token);
+        }
+        else if (token == Brak) {
+            // array access var[xx]
+            match(Brak);
+            *++TEXTSEGMENT = PUSH;
+            expression(Assign);
+            match(']');
+
+            if (tmp > PTR) {
+                // pointer, `not char *`
+                *++TEXTSEGMENT = PUSH;
+                *++TEXTSEGMENT = IMM;
+                *++TEXTSEGMENT = sizeof(int);
+                *++TEXTSEGMENT = MUL;
+            }
+            else if (tmp < PTR) {
+                printf("%d: pointer type expected\n", line);
+                exit(-1);
+            }
+            exprType = tmp - PTR;
+            *++TEXTSEGMENT = ADD;
+            *++TEXTSEGMENT = (exprType == CHAR) ? LC : LI;
+        }
+        else {
+            printf("%d: compiler error, token = %d\n", line, token);
+            exit(-1);
+        }
+    }
 }
 
 void enum_declaration() {
+    printf("call enum_declarration\n");
     //enum_declaration := 'enum' [id] '{' id ['=' 'num'] {',' id ['=' 'num']} '}'
     //parse enum [id] {id [= num] , id [= num], ...}
     int i;
@@ -509,6 +1018,7 @@ void enum_declaration() {
 }
 
 void function_parameter() {
+    printf("call function_parameter\n");
     //parameter_declaration := type {'*'} id {',' type {'*'} id}
     int type;
     int params;
@@ -551,6 +1061,7 @@ void function_parameter() {
 }
 
 void statement() {
+    printf("call statement\n");
     /*
     *statement := non_empty_statement | empty_statement
     *non_empty_statement := if_statement | while_statement | '{' statement '}'
@@ -635,11 +1146,13 @@ void statement() {
     else {
         //a = b; or function_call();
         expression(Assign);
+        printf("test\n");
         match(';');
     }
 }
 
 void function_body() {
+    printf("call function_body\n");
     /*
      *type func (param) {body}
      *in body:
@@ -650,7 +1163,7 @@ void function_body() {
      */
     int posLocal; // postion of local variables on the stack
     int type;
-    posLocal = BP;
+    posLocal = indexBP;
 
     //local variable declaration
     while(token == Int || token ==Char) {
@@ -670,6 +1183,7 @@ void function_body() {
                 printf("Error at line %d: duplicate variable name\n",line);
                 exit(-1);
             }
+            debug("match id \n");
             match(Id);
             currentId[BClass] = currentId[Class];
             currentId[Class] = Loc;
@@ -681,19 +1195,22 @@ void function_body() {
                 match(',');
             }
         }
-        match(";");
+        match(';');
     }
     *++TEXTSEGMENT = ENT; //entrance
-    *++TEXTSEGMENT = posLocal - BP;
+    *++TEXTSEGMENT = posLocal - indexBP;
 
     //statements
     while (token != '}') {
         statement();
     }
     *++TEXTSEGMENT = LEV; //
+    debug("end call function_body\n");
+    return;
 }
 
 void function_declaration() {
+    printf("call function_delaration\n");
     // type func (param) {body}
     match('(');
     function_parameter();
@@ -704,6 +1221,7 @@ void function_declaration() {
 
     // match('}');
     currentId = symbols;
+    int cnt = 0;
     while(currentId[Token]) {
         if (currentId[Class] == Loc) {
             currentId[Class] = currentId[BClass];
@@ -711,7 +1229,9 @@ void function_declaration() {
             currentId[Value] = currentId[BValue];
             //recover the symbol table
         }
+        currentId = currentId + Size;
     }
+    debug("end call function_declaration\n");
 }
 
 /*
@@ -720,7 +1240,8 @@ void function_declaration() {
  *variable_declaration := type {'*'} id {',' {'*'} id } ';'
  *function_declaration := type {'*'} id '(' parameter_declaration ')' '{' body_declaration '}'
  */
-void globel_declaration() {
+void global_declaration() {
+    printf("call global_declaration");
     int type;
     int i;
     baseType = INT;
@@ -783,17 +1304,23 @@ void globel_declaration() {
         }
     }
     next();
+    debug("end call global_declaration\n");
 }
-
+int cnt = 0;
 //entrence
 void program(){
+    debug("call program\n");
     next();
-    while(token >0 ) {
-        globel_declaration();
+    while(token > 0 ) {
+        printf("cnt: %d\n",++cnt);
+        printf("line: %d\n",line);
+        // next();
+        global_declaration();
     }
+    debug("end call program\n");
 }
 
-//Assembly Lang
+//Assembly Language
 int eval() {
     int op, *tmp;
     while (1) {
@@ -845,16 +1372,18 @@ int eval() {
         else if (op == MSET) { ax = (int)memset((char *)sp[2], sp[1], *sp);}
         else if (op == MCMP) { ax = memcmp((char *)sp[2], (char *)sp[1], *sp);}
         else {
-            printf("unknown instruction:%d\n", op);
-            return -1;
+            // printf("unknown instruction:%d\n", op);
+            return 0;
         }
     }
     return 0;
 }
 
 int main(int argc,char **argv) {
+    int *tmp;
     int file;
     int fileLength;
+
     poolSize = 1024*256;
     int i;
     argc--;
@@ -863,6 +1392,7 @@ int main(int argc,char **argv) {
         printf("cannot open file:%s\n", *argv);
         return -1;
     }
+
     if (!(DATASEGMENT = malloc(poolSize))) {
         printf("could not malloc(%d) for DATASEGMENT table\n", poolSize);
         return -1;
@@ -875,9 +1405,16 @@ int main(int argc,char **argv) {
         printf("could not malloc(%d) for TEXTSEGMENT table\n", poolSize);
         return -1;
     }
+    if (!(STACK = malloc(poolSize))) {
+        printf("could not malloc(%d) for stack\n", poolSize);
+        return -1;
+    }
+    memset(STACK,0,poolSize);
     memset(TEXTSEGMENT,0,poolSize);
     memset(DATASEGMENT,0,poolSize);
     memset(symbols,0,poolSize);
+    bp = sp = (int *)((int)STACK + poolSize);
+    ax = 0;
 
     // add keywords to symbol table
     // src = "int char if else while return sizeof enum "
@@ -897,7 +1434,7 @@ int main(int argc,char **argv) {
         currentId[Class] = Sys;
         currentId[Type] = Int;
         currentId[Value] = i++;
-        //ToDo : error (编译器问题？？？，不用cmake用gcc就解决了）
+        //ToDo : error (编译器问题？？？，不用cmake用gcc就解决了） 64位机的指针是8位，32位机是4位，转换为int（4位）会出现问题
         // // printf("match\n");
         // char *str1 =malloc(poolSize);
         // int tmp = (int)LP;
@@ -918,9 +1455,29 @@ int main(int argc,char **argv) {
         return -1;
     }
 
-    src[fileLength] = EOF;
+    src[fileLength] = 0;
     close(file);
     program();
-    system("pause");
+
+    if (!(pc = (int *)idmain[Value])) {
+        printf("main() not defined\n");
+        return -1;
+    }
+    debug("init pc\n");
+    // setup stack
+    if(!(sp = (int *)((int)STACK + poolSize))) {
+        printf("could not malloc(%d) for stack\n", poolSize);
+        return -1;
+    }
+
+    *--sp = EXIT;
+    *--sp = PUSH;
+    tmp = sp;
+    *--sp = argc;
+    *--sp = (int)argv;
+    *--sp = (int)tmp;
+
+    debug("call eval()\n");
+    debug("-----------------\n");
     return eval();
 }
